@@ -353,6 +353,12 @@
             :disabled="!canSubmit"
             @click="onSubmit(isTurnInProgress ? activeInProgressMode : 'steer')"
           >
+            <ContextUsageRing
+              v-if="contextUsageUsedPercent !== null"
+              :used-percent="contextUsageUsedPercent"
+              :tone="contextUsageTone"
+              :tooltip-text="contextUsageTooltipText"
+            />
             <IconTablerArrowUp class="thread-composer-submit-icon" />
           </button>
         </div>
@@ -423,6 +429,7 @@ import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
+import ContextUsageRing from './ContextUsageRing.vue'
 
 type SkillSourceBadge = {
   badge: string
@@ -733,9 +740,13 @@ const quotaWeeklyRefreshText = computed(() => '')
 const quotaTooltipText = computed(() => buildQuotaTooltipText(props.codexQuota ?? null))
 const contextUsageView = computed(() => buildContextUsageView(props.threadTokenUsage ?? null))
 const contextUsageSummaryText = computed(() => contextUsageView.value?.summaryText ?? '')
-const contextUsageTooltipText = computed(() => contextUsageView.value?.tooltipText ?? '')
-const contextUsageRemainingPercent = computed(() => contextUsageView.value?.percentRemaining ?? 0)
+const contextUsageUsedPercent = computed(() => {
+  const percentRemaining = contextUsageView.value?.percentRemaining
+  if (typeof percentRemaining !== 'number') return null
+  return Math.max(0, Math.min(100, 100 - percentRemaining))
+})
 const contextUsageTone = computed(() => contextUsageView.value?.tone ?? 'healthy')
+const contextUsageTooltipText = computed(() => contextUsageView.value?.tooltipText ?? '')
 
 function formatPlanType(planType: string | null | undefined): string {
   if (!planType || planType === 'unknown') return ''
@@ -2253,7 +2264,7 @@ watch(
 }
 
 .thread-composer-submit {
-  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-zinc-900 text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500;
+  @apply relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-zinc-900 text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500;
 }
 
 .thread-composer-submit--queue {
