@@ -4,7 +4,7 @@ import {
   archiveThread,
   forkThread,
   getAvailableCollaborationModes,
-  getAccountRateLimits,
+  getAccountRateLimitsResponse,
   renameThread,
   getAvailableModelIds,
   getCurrentModelConfig,
@@ -1407,7 +1407,9 @@ export function useDesktopState() {
 
     rateLimitRefreshPromise = (async () => {
       try {
-        accountRateLimitSnapshots.value = normalizeRateLimitSnapshotsPayload(await getAccountRateLimits())
+        const payload = await getAccountRateLimitsResponse()
+        accountRateLimitSnapshots.value = normalizeRateLimitSnapshotsPayload(payload)
+        setCodexRateLimit(pickCodexRateLimitSnapshot(payload))
       } catch {
         // Keep the last known rate-limit state if the endpoint is temporarily unavailable.
       } finally {
@@ -2050,20 +2052,29 @@ export function useDesktopState() {
     return typeof value === 'number' && Number.isFinite(value) ? value : null
   }
 
-  function getRateLimitSnapshotKey(snapshot: UiRateLimitSnapshot): string {
-    return snapshot.limitId?.trim() || snapshot.limitName?.trim() || '__default__'
+  function getRateLimitSnapshotKey(snapshot: UiRateLimitSnapshot, fallback: string = ''): string {
+    const limitId = snapshot.limitId?.trim() ?? ''
+    const limitName = snapshot.limitName?.trim() ?? ''
+    const fallbackKey = fallback.trim()
+    const parts: string[] = []
+    if (limitId) parts.push(limitId)
+    if (limitName) parts.push(limitName)
+    if (fallbackKey && fallbackKey !== limitId && fallbackKey !== limitName) {
+      parts.push(fallbackKey)
+    }
+    return parts.length > 0 ? parts.join('::') : '__default__'
   }
 
   function normalizeRateLimitWindow(value: unknown): UiRateLimitSnapshot['primary'] {
     const record = asRecord(value)
     if (!record) return null
 
-    const windowValue = readNumber(record.windowDurationMins)
+    const windowValue = readNumber(record.windowDurationMins ?? record.windowDurationMinutes ?? record.window_duration_mins)
     return {
-      usedPercent: clamp(readNumber(record.usedPercent) ?? 0, 0, 100),
+      usedPercent: clamp(readNumber(record.usedPercent ?? record.used_percent) ?? 0, 0, 100),
       windowDurationMins: windowValue,
       windowMinutes: windowValue,
-      resetsAt: readNumber(record.resetsAt),
+      resetsAt: readNumber(record.resetsAt ?? record.resets_at),
     }
   }
 
@@ -2073,8 +2084,8 @@ export function useDesktopState() {
 
     const credits = asRecord(record.credits)
     return {
-      limitId: readString(record.limitId) || null,
-      limitName: readString(record.limitName) || null,
+      limitId: readString(record.limitId ?? record.limit_id) || null,
+      limitName: readString(record.limitName ?? record.limit_name) || null,
       primary: normalizeRateLimitWindow(record.primary),
       secondary: normalizeRateLimitWindow(record.secondary),
       credits: credits
@@ -2084,7 +2095,7 @@ export function useDesktopState() {
             balance: readString(credits.balance) || null,
           }
         : null,
-      planType: readString(record.planType) || null,
+      planType: readString(record.planType ?? record.plan_type) || null,
     }
   }
 
@@ -2094,20 +2105,25 @@ export function useDesktopState() {
 
     const next: UiRateLimitSnapshot[] = []
     const seen = new Set<string>()
-    const pushSnapshot = (snapshot: UiRateLimitSnapshot | null): void => {
+    const pushSnapshot = (snapshot: UiRateLimitSnapshot | null, fallbackKey: string = ''): void => {
       if (!snapshot) return
-      const key = getRateLimitSnapshotKey(snapshot)
+      const key = getRateLimitSnapshotKey(snapshot, fallbackKey)
       if (seen.has(key)) return
       seen.add(key)
       next.push(snapshot)
     }
 
-    pushSnapshot(normalizeRateLimitSnapshot(record.rateLimits))
+    pushSnapshot(normalizeRateLimitSnapshot(record.rateLimits), '__legacy__')
 
     const byLimitId = asRecord(record.rateLimitsByLimitId)
     if (byLimitId) {
-      for (const snapshot of Object.values(byLimitId)) {
-        pushSnapshot(normalizeRateLimitSnapshot(snapshot))
+      for (const [limitId, row] of Object.entries(byLimitId)) {
+        const snapshot = normalizeRateLimitSnapshot(row)
+        if (!snapshot) continue
+        if (!snapshot.limitId && limitId.trim().length > 0) {
+          snapshot.limitId = limitId.trim()
+        }
+        pushSnapshot(snapshot, limitId.trim())
       }
     }
 
@@ -3468,11 +3484,7 @@ export function useDesktopState() {
   }
 
   async function refreshCodexRateLimits(): Promise<void> {
-    try {
-      setCodexRateLimit(await getAccountRateLimits())
-    } catch {
-      // Keep the last known quota snapshot on transient failures.
-    }
+    await refreshRateLimits()
   }
 
   async function refreshAll(

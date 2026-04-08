@@ -339,9 +339,6 @@
                   <span class="sidebar-settings-context-meta">{{ threadContextSecondaryText }}</span>
                 </span>
               </div>
-              <div class="sidebar-settings-rate-limits">
-                <RateLimitStatus :snapshots="accountRateLimitSnapshots" />
-              </div>
               <div class="sidebar-settings-build-label" aria-label="Worktree name and version">
                 WT {{ worktreeName }} · v{{ appVersion }}
               </div>
@@ -714,7 +711,6 @@ import ContentHeader from './components/content/ContentHeader.vue'
 import ThreadComposer from './components/content/ThreadComposer.vue'
 import ThreadPendingRequestPanel from './components/content/ThreadPendingRequestPanel.vue'
 import QueuedMessages from './components/content/QueuedMessages.vue'
-import RateLimitStatus from './components/content/RateLimitStatus.vue'
 import ComposerDropdown from './components/content/ComposerDropdown.vue'
 import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
@@ -744,7 +740,17 @@ import {
   searchThreads,
   switchAccount,
 } from './api/codexGateway'
-import type { ReasoningEffort, SpeedMode, ThreadScrollState, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
+import type {
+  ReasoningEffort,
+  SpeedMode,
+  ThreadScrollState,
+  UiAccountEntry,
+  UiRateLimitSnapshot,
+  UiRateLimitWindow,
+  UiServerRequest,
+  UiServerRequestReply,
+  UiThreadTokenUsage,
+} from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
 import type { GithubTipsScope, GithubTrendingProject, LocalDirectoryEntry, TelegramStatus, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
@@ -1612,40 +1618,93 @@ function pickWeeklyQuotaWindow(account: UiAccountEntry) {
 function formatResetDateCompact(resetsAt: number | null): string {
   if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) return ''
   const date = new Date(resetsAt * 1000)
-  return `${date.getMonth() + 1}月${date.getDate()}日`
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+  }).format(date)
 }
 
-function formatAccountQuota(account: UiAccountEntry): string {
-  if (isAccountUnavailable(account)) {
-    return account.quotaError || '402 Payment Required'
-  }
-  const quota = account.quotaSnapshot
-  const window = pickWeeklyQuotaWindow(account)
-  const fallbackWindow = quota?.primary ?? quota?.secondary ?? null
-  const displayWindow = window ?? fallbackWindow
-  if (displayWindow) {
-    const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(displayWindow.usedPercent)))
-    const refreshDate = formatResetDateCompact(displayWindow.resetsAt)
+function isSparkRateLimitSnapshot(snapshot: UiRateLimitSnapshot): boolean {
+  const limitId = (snapshot.limitId ?? '').trim().toLowerCase()
+  const limitName = (snapshot.limitName ?? '').trim().toLowerCase()
+  return limitId.includes('spark') || limitName.includes('spark')
+}
+
+function pickPrimaryQuotaWindow(quota: UiRateLimitSnapshot): UiRateLimitWindow | null {
+  const windows = [quota.primary, quota.secondary].filter((quotaWindow): quotaWindow is UiRateLimitWindow => quotaWindow !== null)
+  const exactWeekly = windows.find((quotaWindow) => quotaWindow.windowMinutes === 7 * 24 * 60)
+  if (exactWeekly) return exactWeekly
+
+  const longerWindow = windows
+    .filter((quotaWindow) => typeof quotaWindow.windowMinutes === 'number' && quotaWindow.windowMinutes >= 7 * 24 * 60)
+    .sort((first, second) => (first.windowMinutes ?? 0) - (second.windowMinutes ?? 0))[0] ?? null
+  if (longerWindow) return longerWindow
+
+  return quota.secondary ?? null
+}
+
+function formatRateLimitSnapshotSummary(snapshot: UiRateLimitSnapshot): string {
+  const window = pickPrimaryQuotaWindow(snapshot)
+  if (window) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(window.usedPercent)))
+    const refreshDate = formatResetDateCompact(window.resetsAt)
     return refreshDate
       ? `${remainingPercent}% weekly remaining · ${refreshDate}`
       : `${remainingPercent}% weekly remaining`
   }
+  if (snapshot.credits?.unlimited) return 'Unlimited credits'
+  if (snapshot.credits?.hasCredits && snapshot.credits.balance) {
+    return `${snapshot.credits.balance} credits`
+  }
+  return ''
+}
+
+function formatActiveSparkSummary(account: UiAccountEntry): string {
+  if (!account.isActive) return ''
+
+  const sparkQuota = accountRateLimitSnapshots.value.find(isSparkRateLimitSnapshot)
+  if (!sparkQuota) return ''
+
+  const summary = formatRateLimitSnapshotSummary(sparkQuota)
+  return summary ? `Spark: ${summary}` : ''
+}
+
+function appendSparkSummary(baseText: string, account: UiAccountEntry): string {
+  const sparkText = formatActiveSparkSummary(account)
+  if (!sparkText) return baseText
+  return baseText ? `${baseText}\n${sparkText}` : sparkText
+}
+
+function formatAccountQuota(account: UiAccountEntry): string {
+  if (isAccountUnavailable(account)) {
+    return appendSparkSummary(account.quotaError || '402 Payment Required', account)
+  }
+  const quota = account.quotaSnapshot
+  const window = pickWeeklyQuotaWindow(account)
+  if (window) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(window.usedPercent)))
+    const refreshDate = formatResetDateCompact(window.resetsAt)
+    const baseText = refreshDate
+      ? `${remainingPercent}% weekly remaining · ${refreshDate}`
+      : `${remainingPercent}% weekly remaining`
+    return appendSparkSummary(baseText, account)
+  }
   if (quota?.credits?.unlimited) {
-    return 'Unlimited credits'
+    return appendSparkSummary('Unlimited credits', account)
   }
   if (quota?.credits?.hasCredits && quota.credits.balance) {
-    return `${quota.credits.balance} credits`
+    return appendSparkSummary(`${quota.credits.balance} credits`, account)
   }
   if (account.quotaStatus === 'loading') {
-    return 'Loading quota…'
+    return appendSparkSummary('Loading quota…', account)
   }
   if (account.quotaStatus === 'error') {
-    return account.quotaError || 'Quota unavailable'
+    return appendSparkSummary(account.quotaError || 'Quota unavailable', account)
   }
   if (account.quotaStatus === 'ready' || account.quotaStatus === 'idle') {
-    return 'Quota unavailable'
+    return appendSparkSummary('Quota unavailable', account)
   }
-  return 'Fetching account details…'
+  return appendSparkSummary('Fetching account details…', account)
 }
 
 function buildAccountTitle(account: UiAccountEntry): string {
@@ -3715,7 +3774,7 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .sidebar-settings-account-quota {
-  @apply truncate text-[11px] text-zinc-600;
+  @apply text-[11px] text-zinc-600 whitespace-pre-line leading-4;
 }
 
 .sidebar-settings-account-id {
@@ -3881,10 +3940,6 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-context-meta {
   @apply block text-[11px] font-normal text-zinc-500;
-}
-
-.sidebar-settings-rate-limits {
-  @apply border-t border-zinc-200 px-2 pt-2;
 }
 
 .sidebar-settings-build-label {
