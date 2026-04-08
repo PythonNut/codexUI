@@ -45,6 +45,10 @@ function getSnapshotKey(snapshot: UiRateLimitSnapshot): string {
 }
 
 function getSnapshotTitle(snapshot: UiRateLimitSnapshot): string {
+  const limitId = (snapshot.limitId ?? '').trim().toLowerCase()
+  const limitName = (snapshot.limitName ?? '').trim().toLowerCase()
+  if (limitId.includes('spark') || limitName.includes('spark')) return 'Codex Spark'
+  if (limitId.includes('codex') || limitName.includes('codex')) return 'Codex'
   return snapshot.limitName?.trim() || snapshot.limitId?.trim() || 'Rate limits'
 }
 
