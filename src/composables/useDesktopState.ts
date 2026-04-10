@@ -712,6 +712,35 @@ function mergeMessages(
   return areMessageArraysEqual(previous, merged) ? previous : merged
 }
 
+function dedupeMessagesByIdKeepingLatest(messages: UiMessage[]): UiMessage[] {
+  if (messages.length <= 1) return messages
+  const seenIds = new Set<string>()
+  const orderedIds: string[] = []
+  for (const message of messages) {
+    const messageId = message.id
+    if (!messageId || seenIds.has(messageId)) continue
+    seenIds.add(messageId)
+    orderedIds.push(messageId)
+  }
+
+  if (seenIds.size === messages.length) return messages
+
+  const latestById = new Map<string, UiMessage>()
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    latestById.set(message.id, message)
+  }
+
+  const deduped: UiMessage[] = []
+  for (const messageId of orderedIds) {
+    const message = latestById.get(messageId)
+    if (message) {
+      deduped.push(message)
+    }
+  }
+  return deduped
+}
+
 function areUiFileChangesEqual(first?: UiFileChange[], second?: UiFileChange[]): boolean {
   if (!first && !second) return true
   if (!first || !second) return false
@@ -1188,7 +1217,13 @@ export function useDesktopState() {
     const liveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
-    const combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveAgent]
+    const combined = dedupeMessagesByIdKeepingLatest([
+      ...persisted,
+      ...livePlan,
+      ...liveCommands,
+      ...liveFileChanges,
+      ...liveAgent,
+    ])
 
     const summary = turnSummaryByThreadId.value[threadId]
     if (!summary) return combined
@@ -1347,9 +1382,7 @@ export function useDesktopState() {
         clearLivePlansForThread(threadId)
         setLiveAgentMessagesForThread(threadId, [])
         clearLiveReasoningForThread(threadId)
-        if (liveCommandsByThreadId.value[threadId]) {
-          liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
-        }
+        clearLiveCommandsForThread(threadId)
       } catch {
         // If rollback fails, continue with retry rather than dropping the turn.
       }
@@ -1951,6 +1984,7 @@ export function useDesktopState() {
   function setLiveAgentMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = liveAgentMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
+
     liveAgentMessagesByThreadId.value = {
       ...liveAgentMessagesByThreadId.value,
       [threadId]: nextMessages,
@@ -1960,6 +1994,7 @@ export function useDesktopState() {
   function setLiveFileChangeMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
+
     liveFileChangeMessagesByThreadId.value = {
       ...liveFileChangeMessagesByThreadId.value,
       [threadId]: nextMessages,
@@ -1969,6 +2004,7 @@ export function useDesktopState() {
   function setLivePlanMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = livePlanMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
+
     livePlanMessagesByThreadId.value = {
       ...livePlanMessagesByThreadId.value,
       [threadId]: nextMessages,
@@ -2033,14 +2069,17 @@ export function useDesktopState() {
     liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
   }
 
+  function clearLiveCommandsForThread(threadId: string): void {
+    if (!threadId) return
+    if (!liveCommandsByThreadId.value[threadId]) return
+    liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
+  }
+
   function clearCompletedTurnLiveState(threadId: string): void {
     if (!threadId) return
     clearLivePlansForThread(threadId)
     clearLiveReasoningForThread(threadId)
     setTurnActivityForThread(threadId, null)
-    if (liveCommandsByThreadId.value[threadId]) {
-      liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
-    }
     if (activeTurnIdByThreadId.value[threadId]) {
       activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
     }
@@ -2997,11 +3036,7 @@ export function useDesktopState() {
     if (!item || item.type !== 'fileChange') return null
     const id = readString(item.id)
     if (!id) return null
-    const threadId = readString(params?.threadId)
     const turnId = readString(params?.turnId)
-    const turnIndex = threadId && turnId
-      ? turnIndexByTurnIdByThreadId.value[threadId]?.[turnId]
-      : undefined
 
     const fileChanges = toUiFileChanges(item.changes)
     const fileChangeStatus = normalizeFileChangeStatus(item.status)
@@ -3015,7 +3050,6 @@ export function useDesktopState() {
       fileChangeStatus,
       fileChanges,
       turnId: turnId || undefined,
-      turnIndex: typeof turnIndex === 'number' ? turnIndex : undefined,
     }
   }
 
@@ -3043,21 +3077,7 @@ export function useDesktopState() {
     const current = liveFileChangeMessagesByThreadId.value[threadId]
     if (!current || current.length === 0) return
     const persistedIds = new Set(persistedMessages.map((message) => message.id))
-    const persistedTurnIds = new Set(
-      persistedMessages
-        .filter((message) => message.messageType === 'fileChange' && typeof message.turnId === 'string' && message.turnId.length > 0)
-        .map((message) => message.turnId as string),
-    )
-    const persistedTurnIndices = new Set(
-      persistedMessages
-        .filter((message) => message.messageType === 'fileChange' && typeof message.turnIndex === 'number')
-        .map((message) => message.turnIndex as number),
-    )
-    const next = current.filter((message) => (
-      !persistedIds.has(message.id)
-      && !(message.turnId && persistedTurnIds.has(message.turnId))
-      && !(typeof message.turnIndex === 'number' && persistedTurnIndices.has(message.turnIndex))
-    ))
+    const next = current.filter((message) => !persistedIds.has(message.id))
     if (next.length === current.length) return
     if (next.length === 0) {
       liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
@@ -3134,6 +3154,7 @@ export function useDesktopState() {
       }
       clearLivePlansForThread(startedTurn.threadId)
       clearLiveFileChangesForThread(startedTurn.threadId)
+      clearLiveCommandsForThread(startedTurn.threadId)
       setTurnSummaryForThread(startedTurn.threadId, null)
       setTurnErrorForThread(startedTurn.threadId, null)
       setThreadInProgress(startedTurn.threadId, true)
@@ -3336,9 +3357,6 @@ export function useDesktopState() {
       activeReasoningItemId = ''
       shouldAutoScrollOnNextAgentEvent = false
       clearLiveReasoningForThread(notificationThreadId)
-      if (liveCommandsByThreadId.value[notificationThreadId]) {
-        liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, notificationThreadId)
-      }
       const completedThreadId = extractThreadIdFromNotification(notification)
       if (completedThreadId) {
         setThreadInProgress(completedThreadId, false)
@@ -3534,7 +3552,9 @@ export function useDesktopState() {
       replaceTurnIndexLookupForThread(threadId, turnIndexByTurnId)
       rebindLiveFileChangeTurnIndices(threadId)
       const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
-      const mergedMessages = mergeMessages(previousPersisted, nextMessages, {
+      const previousCommands = liveCommandsByThreadId.value[threadId] ?? []
+      const previousForMerge = dedupeMessagesByIdKeepingLatest([...previousPersisted, ...previousCommands])
+      const mergedMessages = mergeMessages(previousForMerge, nextMessages, {
         preserveMissing: options.silent === true,
       })
       setPersistedMessagesForThread(threadId, mergedMessages)
@@ -3748,9 +3768,7 @@ export function useDesktopState() {
       clearLivePlansForThread(forkedThreadId)
       setLiveAgentMessagesForThread(forkedThreadId, [])
       clearLiveReasoningForThread(forkedThreadId)
-      if (liveCommandsByThreadId.value[forkedThreadId]) {
-        liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, forkedThreadId)
-      }
+      clearLiveCommandsForThread(forkedThreadId)
       setTurnSummaryForThread(forkedThreadId, null)
       setTurnActivityForThread(forkedThreadId, null)
       setTurnErrorForThread(forkedThreadId, null)
@@ -4174,9 +4192,7 @@ export function useDesktopState() {
       setPersistedMessagesForThread(threadId, nextMessages)
       setLiveAgentMessagesForThread(threadId, [])
       clearLiveReasoningForThread(threadId)
-      if (liveCommandsByThreadId.value[threadId]) {
-        liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
-      }
+      clearLiveCommandsForThread(threadId)
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(threadId, null)
       setTurnErrorForThread(threadId, null)
