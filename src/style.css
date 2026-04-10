@@ -1060,6 +1060,37 @@
   @apply text-sky-300 decoration-sky-500;
 }
 
+:root.dark .plan-card-markdown .message-text,
+:root.dark .plan-card-markdown .message-heading,
+:root.dark .plan-card-markdown .message-heading-h1,
+:root.dark .plan-card-markdown .message-heading-h2,
+:root.dark .plan-card-markdown .message-heading-h3,
+:root.dark .plan-card-markdown .message-heading-h4,
+:root.dark .plan-card-markdown .message-heading-h5,
+:root.dark .plan-card-markdown .message-heading-h6,
+:root.dark .plan-card-markdown .message-list,
+:root.dark .plan-card-markdown .message-list-item,
+:root.dark .plan-card-markdown .message-list-item-text,
+:root.dark .plan-card-markdown .message-task-list,
+:root.dark .plan-card-markdown .message-task-item,
+:root.dark .plan-card-markdown .message-task-checkbox,
+:root.dark .plan-card-markdown .message-divider,
+:root.dark .plan-card-markdown .message-file-link {
+  @apply text-zinc-200;
+}
+
+:root.dark .plan-card-markdown .message-heading-h6 {
+  @apply text-zinc-300;
+}
+
+:root.dark .plan-card-markdown .message-blockquote {
+  @apply border-zinc-600 bg-zinc-900/80 text-zinc-300;
+}
+
+:root.dark .plan-card-markdown .message-inline-code {
+  @apply bg-zinc-700/70 text-zinc-100;
+}
+
 :root.dark .plan-card-markdown .message-table {
   @apply bg-zinc-900/90;
 }
