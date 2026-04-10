@@ -82,6 +82,18 @@ export type CommandAction =
   | { type: 'search'; command: string; query: string | null; path: string | null }
   | { type: 'unknown'; command: string }
 
+export type WebSearchAction =
+  | { type: 'search'; query: string | null; queries: string[] | null }
+  | { type: 'openPage'; url: string | null }
+  | { type: 'findInPage'; url: string | null; pattern: string | null }
+  | { type: 'other' }
+
+export type WebSearchData = {
+  status: 'inProgress' | 'completed'
+  query: string
+  action?: WebSearchAction | null
+}
+
 export type CommandExecutionData = {
   command: string
   cwd: string | null
@@ -206,6 +218,7 @@ export type UiMessage = {
   isUnhandled?: boolean
   commandExecution?: CommandExecutionData
   plan?: UiPlanData
+  webSearch?: WebSearchData
   turnId?: string
   turnIndex?: number
 }

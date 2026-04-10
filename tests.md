@@ -2255,6 +2255,29 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 
 #### Rollback/Cleanup
 - Run `codexui login` to restore Codex authentication if needed.
+### Feature: Web search messages render and update in thread flow
+
+#### Prerequisites
+- Start the app from this repository (`pnpm run dev`).
+- Use a project/thread where web-search-capable queries can be triggered.
+
+#### Steps
+1. Start a thread and send a prompt that triggers web search behavior (for example, asking for a web lookup).
+2. In the conversation list, wait until a system `webSearch` row appears and verify it renders with the `Web search` card style.
+3. If updates are sent while searching, observe that the card status changes from `Searching` to `Completed`.
+4. Verify action details update in place (for example search query, open-page URL, or find-in-page pattern).
+5. Send follow-up requests while the previous search card is still visible and confirm no duplicate permanent rows appear for the same in-progress item (it should update instead).
+6. Refresh the page after a search flow starts and resumes, then reopen the same thread.
+7. Confirm webSearch rows continue to render in chronological order and do not leave stale duplicate rows after refresh.
+
+#### Expected Results
+- Web search messages render in their own card row with clear `Search`/`Open page`/`Find` summary lines.
+- In-progress search rows show `Searching` status and completed rows show `Completed` status.
+- Repeated search updates update existing row(s) by id instead of appending new duplicates.
+- Refreshing the thread does not lose in-flight or completed web-search rows expected from persisted/live state.
+
+#### Rollback/Cleanup
+- No cleanup required.
 
 ---
 
