@@ -11,6 +11,8 @@ import type {
   UiFileAttachment,
   UiFileChange,
   UiFileChangeStatus,
+  WebSearchAction,
+  WebSearchData,
   UiMessage,
   UiPlanData,
   UiPlanStep,
@@ -157,6 +159,39 @@ function readCommandActions(value: unknown): CommandExecutionData['commandAction
   }
 
   return normalized
+}
+
+function normalizeWebSearchAction(value: unknown): WebSearchData['action'] | null {
+  const record = asRecord(value)
+  if (!record) return null
+
+  const rawType = readString(record.type).trim().toLowerCase()
+  if (rawType === 'search') {
+    const query = readString(record.query).trim() || null
+    const rawQueries = Array.isArray(record.queries) ? record.queries : []
+    const queries = rawQueries
+      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter((query) => query.length > 0)
+    return { type: 'search', query, queries: queries.length > 0 ? queries : null }
+  }
+
+  if (rawType === 'openpage' || rawType === 'openPage') {
+    return { type: 'openPage', url: readString(record.url).trim() || null }
+  }
+
+  if (rawType === 'findinpage' || rawType === 'findInPage') {
+    const url = readString(record.url).trim() || null
+    const pattern = readString(record.pattern).trim() || null
+    return { type: 'findInPage', url, pattern }
+  }
+
+  if (rawType === 'other') return { type: 'other' }
+  return null
+}
+
+function normalizeWebSearchStatus(value: unknown): WebSearchData['status'] {
+  if (value === 'inProgress' || value === 'in_progress') return 'inProgress'
+  return 'completed'
 }
 
 function parseUserMessageContent(
@@ -557,6 +592,29 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
         messageType: 'fileChange',
         fileChangeStatus,
         fileChanges,
+      },
+    ]
+  }
+
+  if (item.type === 'webSearch') {
+    const raw = item as Record<string, unknown>
+    const query = (typeof raw.query === 'string' ? raw.query : '')
+      .trim() || (typeof raw.text === 'string' ? raw.text.trim() : '')
+      .trim()
+    const status = normalizeWebSearchStatus(raw.status)
+    if (!query) return []
+    const action = normalizeWebSearchAction(raw.action)
+    return [
+      {
+        id: item.id,
+        role: 'system',
+        text: query,
+        messageType: 'webSearch',
+        webSearch: {
+          status,
+          query,
+          action,
+        },
       },
     ]
   }

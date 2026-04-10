@@ -45,6 +45,7 @@ import type {
   ThreadScrollState,
   UiFileChange,
   UiLiveOverlay,
+  WebSearchData,
   UiMessage,
   UiPlanData,
   UiPlanStep,
@@ -57,6 +58,7 @@ import type {
   UiThread,
 } from '../types/codex'
 import { normalizePathForUi, toProjectName } from '../pathUtils.js'
+import { areWebSearchDataEqual, buildWebSearchSummaryLines } from '../utils/webSearch'
 
 function flattenThreads(groups: UiProjectGroup[]): UiThread[] {
   return groups.flatMap((group) => group.threads)
@@ -673,6 +675,49 @@ function readCommandActionsFromItem(item: unknown): CommandExecutionData['comman
   return normalizedActions
 }
 
+function normalizeWebSearchStatus(value: unknown): WebSearchData['status'] {
+  if (value === 'inProgress' || value === 'in_progress') return 'inProgress'
+  return 'completed'
+}
+
+function normalizeWebSearchActionFromItem(item: unknown): WebSearchData['action'] | null {
+  const itemRecord = item !== null && typeof item === 'object' && !Array.isArray(item)
+    ? item as Record<string, unknown>
+    : null
+  const action = itemRecord?.action
+  const actionRecord = action !== null && typeof action === 'object' && !Array.isArray(action)
+    ? action as Record<string, unknown>
+    : null
+  if (!actionRecord) return null
+
+  const rawType = typeof actionRecord.type === 'string' ? actionRecord.type.trim().toLowerCase() : ''
+  if (rawType === 'search') {
+    const query = typeof actionRecord.query === 'string' ? actionRecord.query.trim() : ''
+    const rawQueries = Array.isArray(actionRecord.queries) ? actionRecord.queries : []
+    const queries = rawQueries
+      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter((entry) => entry.length > 0)
+    return { type: 'search', query: query || null, queries: queries.length > 0 ? queries : null }
+  }
+
+  if (rawType === 'openpage') {
+    const url = typeof actionRecord.url === 'string' ? actionRecord.url.trim() : ''
+    return { type: 'openPage', url: url || null }
+  }
+
+  if (rawType === 'findinpage') {
+    const url = typeof actionRecord.url === 'string' ? actionRecord.url.trim() : ''
+    const pattern = typeof actionRecord.pattern === 'string' ? actionRecord.pattern.trim() : ''
+    return { type: 'findInPage', url: url || null, pattern: pattern || null }
+  }
+
+  if (rawType === 'other') {
+    return { type: 'other' }
+  }
+
+  return null
+}
+
 function readCommandExecutionActionSummary(action: CommandExecutionData): string[] {
   const actions = action.commandActions ?? []
   const primary = action.command.trim()
@@ -722,6 +767,7 @@ function areMessageFieldsEqual(first: UiMessage, second: UiMessage): boolean {
     first.rawPayload === second.rawPayload &&
     first.isUnhandled === second.isUnhandled &&
     areCommandExecutionsEqual(first.commandExecution, second.commandExecution) &&
+    areWebSearchDataEqual(first.webSearch, second.webSearch) &&
     arePlanDataEqual(first.plan, second.plan) &&
     first.turnId === second.turnId &&
     first.turnIndex === second.turnIndex &&
@@ -1149,6 +1195,7 @@ export function useDesktopState() {
   const liveReasoningTextByThreadId = ref<Record<string, string>>({})
   const liveCommandsByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveFileChangeMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
+  const liveWebSearchMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const inProgressById = ref<Record<string, boolean>>({})
   type FileAttachment = { label: string; path: string; fsPath: string }
   type QueuedMessage = {
@@ -1338,10 +1385,12 @@ export function useDesktopState() {
     const liveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
+    const liveWebSearch = liveWebSearchMessagesByThreadId.value[threadId] ?? []
     const combined = dedupeMessagesByIdKeepingLatest([
       ...persisted,
       ...livePlan,
       ...liveCommands,
+      ...liveWebSearch,
       ...liveFileChanges,
       ...liveAgent,
     ])
@@ -1899,6 +1948,7 @@ export function useDesktopState() {
     liveReasoningTextByThreadId.value = pruneThreadStateMap(liveReasoningTextByThreadId.value, activeThreadIds)
     liveCommandsByThreadId.value = pruneThreadStateMap(liveCommandsByThreadId.value, activeThreadIds)
     liveFileChangeMessagesByThreadId.value = pruneThreadStateMap(liveFileChangeMessagesByThreadId.value, activeThreadIds)
+    liveWebSearchMessagesByThreadId.value = pruneThreadStateMap(liveWebSearchMessagesByThreadId.value, activeThreadIds)
     turnSummaryByThreadId.value = pruneThreadStateMap(turnSummaryByThreadId.value, activeThreadIds)
     turnActivityByThreadId.value = pruneThreadStateMap(turnActivityByThreadId.value, activeThreadIds)
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
@@ -2218,6 +2268,16 @@ export function useDesktopState() {
     }
   }
 
+  function setLiveWebSearchMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
+    const previous = liveWebSearchMessagesByThreadId.value[threadId] ?? []
+    if (areMessageArraysEqual(previous, nextMessages)) return
+
+    liveWebSearchMessagesByThreadId.value = {
+      ...liveWebSearchMessagesByThreadId.value,
+      [threadId]: nextMessages,
+    }
+  }
+
   function setLivePlanMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = livePlanMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
@@ -2244,6 +2304,12 @@ export function useDesktopState() {
     const previous = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const next = upsertMessage(previous, nextMessage)
     setLiveFileChangeMessagesForThread(threadId, next)
+  }
+
+  function upsertLiveWebSearchMessage(threadId: string, nextMessage: UiMessage): void {
+    const previous = liveWebSearchMessagesByThreadId.value[threadId] ?? []
+    const next = upsertMessage(previous, nextMessage)
+    setLiveWebSearchMessagesForThread(threadId, next)
   }
 
   function setLiveReasoningText(threadId: string, text: string): void {
@@ -2290,6 +2356,12 @@ export function useDesktopState() {
     if (!threadId) return
     if (!liveCommandsByThreadId.value[threadId]) return
     liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
+  }
+
+  function clearLiveWebSearchesForThread(threadId: string): void {
+    if (!threadId) return
+    if (!liveWebSearchMessagesByThreadId.value[threadId]) return
+    liveWebSearchMessagesByThreadId.value = omitKey(liveWebSearchMessagesByThreadId.value, threadId)
   }
 
   function clearCompletedTurnLiveState(threadId: string): void {
@@ -2897,6 +2969,20 @@ export function useDesktopState() {
           },
         }
       }
+      if (itemType === 'websearch' || itemType === 'webSearch') {
+        const webSearch = {
+          status: normalizeWebSearchStatus(item?.status),
+          query: readString(item?.query) || readString(item?.text) || '',
+          action: normalizeWebSearchActionFromItem(item),
+        }
+        return {
+          threadId,
+          activity: {
+            label: webSearch.status === 'inProgress' ? 'Searching web' : 'Search completed',
+            details: buildWebSearchSummaryLines(webSearch).filter((line) => line.length > 0),
+          },
+        }
+      }
     }
 
     if (notification.method === 'item/commandExecution/outputDelta') {
@@ -3302,6 +3388,49 @@ export function useDesktopState() {
     }
   }
 
+  function readWebSearchStarted(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/started') return null
+    const params = asRecord(notification.params)
+    const item = asRecord(params?.item)
+    if (!item || item.type !== 'webSearch') return null
+    const id = readString(item.id)
+    if (!id) return null
+    const query = readString(item.query) || readString(item.text)
+    if (!query) return null
+    return {
+      id,
+      role: 'system',
+      text: query,
+      messageType: 'webSearch',
+      webSearch: {
+        status: 'inProgress',
+        query,
+        action: normalizeWebSearchActionFromItem(item),
+      },
+    }
+  }
+
+  function readWebSearchCompleted(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/completed') return null
+    const params = asRecord(notification.params)
+    const item = asRecord(params?.item)
+    if (!item || item.type !== 'webSearch') return null
+    const id = readString(item.id)
+    const query = readString(item.query) || readString(item.text)
+    if (!id || !query) return null
+    return {
+      id,
+      role: 'system',
+      text: query,
+      messageType: 'webSearch',
+      webSearch: {
+        status: normalizeWebSearchStatus(item.status),
+        query,
+        action: normalizeWebSearchActionFromItem(item),
+      },
+    }
+  }
+
   function readCompletedFileChange(notification: RpcNotification): UiMessage | null {
     if (notification.method !== 'item/completed') return null
     const params = asRecord(notification.params)
@@ -3356,6 +3485,19 @@ export function useDesktopState() {
       liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
     } else {
       liveFileChangeMessagesByThreadId.value = { ...liveFileChangeMessagesByThreadId.value, [threadId]: next }
+    }
+  }
+
+  function removeLiveWebSearchPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
+    const current = liveWebSearchMessagesByThreadId.value[threadId]
+    if (!current || current.length === 0) return
+    const persistedIds = new Set(persistedMessages.map((message) => message.id))
+    const next = current.filter((message) => !persistedIds.has(message.id))
+    if (next.length === current.length) return
+    if (next.length === 0) {
+      liveWebSearchMessagesByThreadId.value = omitKey(liveWebSearchMessagesByThreadId.value, threadId)
+    } else {
+      liveWebSearchMessagesByThreadId.value = { ...liveWebSearchMessagesByThreadId.value, [threadId]: next }
     }
   }
 
@@ -3429,6 +3571,7 @@ export function useDesktopState() {
       clearLivePlansForThread(startedTurn.threadId)
       clearLiveFileChangesForThread(startedTurn.threadId)
       clearLiveCommandsForThread(startedTurn.threadId)
+      clearLiveWebSearchesForThread(startedTurn.threadId)
       setTurnSummaryForThread(startedTurn.threadId, null)
       setTurnErrorForThread(startedTurn.threadId, null)
       setThreadInProgress(startedTurn.threadId, true)
@@ -3614,6 +3757,26 @@ export function useDesktopState() {
     const commandCompleted = readCommandExecutionCompleted(notification)
     if (commandCompleted) {
       upsertLiveCommand(notificationThreadId, commandCompleted)
+    }
+
+    const webSearchStarted = readWebSearchStarted(notification)
+    if (webSearchStarted) {
+      upsertLiveWebSearchMessage(notificationThreadId, webSearchStarted)
+      setTurnActivityForThread(notificationThreadId, {
+        label: 'Searching web',
+        details: buildWebSearchSummaryLines(webSearchStarted.webSearch),
+      })
+    }
+
+    const webSearchCompleted = readWebSearchCompleted(notification)
+    if (webSearchCompleted) {
+      upsertLiveWebSearchMessage(notificationThreadId, webSearchCompleted)
+      if (webSearchCompleted.webSearch?.status === 'completed') {
+        setTurnActivityForThread(notificationThreadId, {
+          label: 'Search completed',
+          details: buildWebSearchSummaryLines(webSearchCompleted.webSearch),
+        })
+      }
     }
 
     const completedFileChange = readCompletedFileChange(notification)
@@ -3980,7 +4143,12 @@ export function useDesktopState() {
       rebindLiveFileChangeTurnIndices(threadId)
       const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
       const previousCommands = liveCommandsByThreadId.value[threadId] ?? []
-      const previousForMerge = dedupeMessagesByIdKeepingLatest([...previousPersisted, ...previousCommands])
+      const previousWebSearch = liveWebSearchMessagesByThreadId.value[threadId] ?? []
+      const previousForMerge = dedupeMessagesByIdKeepingLatest([
+        ...previousPersisted,
+        ...previousCommands,
+        ...previousWebSearch,
+      ])
       const mergedMessages = mergeMessages(previousForMerge, nextMessages, {
         preserveMissing: options.silent === true,
       })
@@ -3995,6 +4163,7 @@ export function useDesktopState() {
       }
       removeLiveCommandsPersistedIn(threadId, nextMessages)
       removeLiveFileChangesPersistedIn(threadId, nextMessages)
+      removeLiveWebSearchPersistedIn(threadId, nextMessages)
 
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
@@ -4239,6 +4408,7 @@ export function useDesktopState() {
       setLiveAgentMessagesForThread(forkedThreadId, [])
       clearLiveReasoningForThread(forkedThreadId)
       clearLiveCommandsForThread(forkedThreadId)
+      clearLiveWebSearchesForThread(forkedThreadId)
       setTurnSummaryForThread(forkedThreadId, null)
       setTurnActivityForThread(forkedThreadId, null)
       setTurnErrorForThread(forkedThreadId, null)
@@ -4705,6 +4875,7 @@ export function useDesktopState() {
       setLiveAgentMessagesForThread(threadId, [])
       clearLiveReasoningForThread(threadId)
       clearLiveCommandsForThread(threadId)
+      clearLiveWebSearchesForThread(threadId)
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(threadId, null)
       setTurnErrorForThread(threadId, null)
@@ -5090,6 +5261,7 @@ export function useDesktopState() {
     persistedMessagesByThreadId.value = {}
     livePlanMessagesByThreadId.value = {}
     liveAgentMessagesByThreadId.value = {}
+    liveWebSearchMessagesByThreadId.value = {}
     liveReasoningTextByThreadId.value = {}
     liveCommandsByThreadId.value = {}
     liveFileChangeMessagesByThreadId.value = {}

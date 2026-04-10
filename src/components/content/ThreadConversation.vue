@@ -221,6 +221,47 @@
           </div>
         </div>
 
+        <div
+          v-else-if="isWebSearchMessage(message)"
+          class="message-row"
+          :data-role="message.role"
+          :data-message-type="message.messageType || ''"
+        >
+          <div class="message-stack" :data-role="message.role">
+            <article class="message-card plan-card" :data-role="message.role">
+              <header class="plan-card-header">
+                <p class="plan-card-title">Web search</p>
+                <span
+                  class="plan-card-badge"
+                  :class="message.webSearch.status === 'inProgress' ? 'bg-amber-200 text-amber-900' : 'bg-emerald-100 text-emerald-900'"
+                >
+                  {{ webSearchStatusLabel(message.webSearch.status) }}
+                </span>
+              </header>
+              <div class="plan-card-markdown">
+                <ul
+                  v-if="message.webSearch.action?.type === 'search'"
+                  class="message-list message-list-unordered"
+                >
+                  <li
+                    v-for="(line, index) in buildWebSearchSummaryLines(message.webSearch)"
+                    :key="`web-search-line:${message.id}:${index}`"
+                    class="message-list-item"
+                  >
+                    {{ line }}
+                  </li>
+                </ul>
+                <p
+                  v-else
+                  class="message-text"
+                >
+                  {{ buildWebSearchSummaryLines(message.webSearch)[0] || 'Web search' }}
+                </p>
+              </div>
+            </article>
+          </div>
+        </div>
+
         <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
           <div class="message-stack" :data-role="message.role">
             <article class="message-body" :data-role="message.role">
@@ -902,8 +943,10 @@ import type {
   UiMessage,
   UiPlanStep,
   UiServerRequest,
+  WebSearchData,
 } from '../../types/codex'
 import { useMobile } from '../../composables/useMobile'
+import { buildWebSearchSummaryLines, webSearchStatusLabel } from '../../utils/webSearch'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
@@ -1014,6 +1057,11 @@ function isFileChangeMessage(message: UiMessage): boolean {
     && message.fileChangeStatus === 'completed'
     && Array.isArray(message.fileChanges)
     && message.fileChanges.length > 0
+}
+
+function isWebSearchMessage(message: UiMessage): message is UiMessage & { webSearch: WebSearchData } {
+  return message.messageType === 'webSearch'
+    && !!message.webSearch
 }
 
 function commandExecutionSummaryLines(message: UiMessage): string[] {
