@@ -37,6 +37,7 @@ import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v
 import type {
   CollaborationModeKind,
   CollaborationModeOption,
+  CommandAction,
   CommandExecutionData,
   UiPendingRequestState,
   ReasoningEffort,
@@ -589,7 +590,95 @@ function reorderStringArray(items: string[], fromIndex: number, toIndex: number)
 function areCommandExecutionsEqual(first?: CommandExecutionData, second?: CommandExecutionData): boolean {
   if (!first && !second) return true
   if (!first || !second) return false
-  return first.status === second.status && first.aggregatedOutput === second.aggregatedOutput && first.exitCode === second.exitCode
+  return (
+    first.status === second.status
+    && first.command === second.command
+    && first.aggregatedOutput === second.aggregatedOutput
+    && first.exitCode === second.exitCode
+    && areCommandActionsEqual(first.commandActions, second.commandActions)
+  )
+}
+
+function areCommandActionsEqual(
+  first?: CommandExecutionData['commandActions'],
+  second?: CommandExecutionData['commandActions'],
+): boolean {
+  return JSON.stringify(first ?? []) === JSON.stringify(second ?? [])
+}
+
+function commandActionDisplaySummary(action: CommandAction): string {
+  if (action.type === 'read') {
+    return `Read ${action.name}`
+  }
+
+  if (action.type === 'listFiles') {
+    return `List ${action.path || action.command}`
+  }
+
+  if (action.type === 'search') {
+    const query = action.query?.trim()
+    const path = action.path?.trim()
+    if (query && path) return `Search ${query} in ${path}`
+    if (query) return `Search ${query}`
+    return `Search ${action.command}`
+  }
+
+  return `Run ${action.command}`
+}
+
+function readCommandActionsFromItem(item: unknown): CommandExecutionData['commandActions'] {
+  const itemRecord = item !== null && typeof item === 'object' && !Array.isArray(item)
+    ? item as Record<string, unknown>
+    : null
+  const rawActionList = Array.isArray(itemRecord?.commandActions) ? itemRecord.commandActions : null
+  const normalizedActions: CommandExecutionData['commandActions'] = []
+  if (!Array.isArray(rawActionList)) return normalizedActions
+
+  for (const rawAction of rawActionList) {
+    const action = rawAction !== null && typeof rawAction === 'object' && !Array.isArray(rawAction)
+      ? rawAction as Record<string, unknown>
+      : null
+    if (!action) continue
+
+    const type = typeof action.type === 'string' ? action.type : ''
+    const command = typeof action.command === 'string' ? action.command.trim() : ''
+    if (!type || !command) continue
+
+    if (type === 'read') {
+      const name = typeof action.name === 'string' ? action.name.trim() : ''
+      const path = typeof action.path === 'string' ? action.path.trim() : ''
+      if (!name && !path) continue
+      normalizedActions.push({ type: 'read', command, name: name || path, path: path || command })
+      continue
+    }
+
+    if (type === 'listFiles') {
+      const path = typeof action.path === 'string' ? action.path.trim() : ''
+      normalizedActions.push({ type: 'listFiles', command, path: path || null })
+      continue
+    }
+
+    if (type === 'search') {
+      const query = typeof action.query === 'string' ? action.query.trim() : null
+      const path = typeof action.path === 'string' ? action.path.trim() : null
+      normalizedActions.push({ type: 'search', command, query: query || null, path: path || null })
+      continue
+    }
+
+    if (type === 'unknown') {
+      normalizedActions.push({ type: 'unknown', command })
+    }
+  }
+
+  return normalizedActions
+}
+
+function readCommandExecutionActionSummary(action: CommandExecutionData): string[] {
+  const actions = action.commandActions ?? []
+  const primary = action.command.trim()
+  const summaries = actions.map((entry) => commandActionDisplaySummary(entry))
+  if (summaries.length > 0) return summaries
+  return [primary || '(command)']
 }
 
 function arePlanStepsEqual(first: UiPlanStep[] = [], second: UiPlanStep[] = []): boolean {
@@ -2740,12 +2829,19 @@ export function useDesktopState() {
         }
       }
       if (itemType === 'commandexecution') {
-        const cmd = readString(item?.command)
+        const itemCommand = readString(item?.command)
         return {
           threadId,
           activity: {
             label: 'Running command',
-            details: cmd ? [cmd] : [],
+            details: readCommandExecutionActionSummary({
+              command: itemCommand,
+              cwd: typeof item?.cwd === 'string' ? item.cwd : null,
+              status: 'inProgress',
+              aggregatedOutput: '',
+              exitCode: null,
+              commandActions: readCommandActionsFromItem(item),
+            }),
           },
         }
       }
@@ -3113,12 +3209,13 @@ export function useDesktopState() {
     const turnIndex = threadId && turnId
       ? turnIndexByTurnIdByThreadId.value[threadId]?.[turnId]
       : undefined
+    const commandActions = readCommandActionsFromItem(item)
     return {
       id,
       role: 'system',
       text: command,
       messageType: 'commandExecution',
-      commandExecution: { command, cwd, status: 'inProgress', aggregatedOutput: '', exitCode: null },
+      commandExecution: { command, cwd, status: 'inProgress', aggregatedOutput: '', exitCode: null, commandActions },
       turnId: turnId || undefined,
       turnIndex: typeof turnIndex === 'number' ? turnIndex : undefined,
     }
@@ -3153,12 +3250,13 @@ export function useDesktopState() {
     const turnIndex = threadId && turnId
       ? turnIndexByTurnIdByThreadId.value[threadId]?.[turnId]
       : undefined
+    const commandActions = readCommandActionsFromItem(item)
     return {
       id,
       role: 'system',
       text: command,
       messageType: 'commandExecution',
-      commandExecution: { command, cwd, status, aggregatedOutput, exitCode },
+      commandExecution: { command, cwd, status, aggregatedOutput, exitCode, commandActions },
       turnId: turnId || undefined,
       turnIndex: typeof turnIndex === 'number' ? turnIndex : undefined,
     }
@@ -3466,7 +3564,18 @@ export function useDesktopState() {
     const commandStarted = readCommandExecutionStarted(notification)
     if (commandStarted) {
       upsertLiveCommand(notificationThreadId, commandStarted)
-      setTurnActivityForThread(notificationThreadId, { label: 'Running command', details: [commandStarted.commandExecution?.command ?? ''] })
+      setTurnActivityForThread(notificationThreadId, {
+        label: 'Running command',
+        details: readCommandExecutionActionSummary(
+          commandStarted.commandExecution ?? {
+            command: commandStarted.text,
+            cwd: null,
+            status: 'inProgress',
+            aggregatedOutput: '',
+            exitCode: null,
+          },
+        ),
+      })
     }
 
     const commandDelta = readCommandOutputDelta(notification)

@@ -104,6 +104,61 @@ function parseHeartbeatEnvelope(value: string): { automationId: string; instruct
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function readCommandActions(value: unknown): CommandExecutionData['commandActions'] {
+  const rawActions = Array.isArray(value) ? value : []
+  const normalized: CommandExecutionData['commandActions'] = []
+
+  for (const rawAction of rawActions) {
+    const record = asRecord(rawAction)
+    if (!record) continue
+
+    const type = readString(record.type).trim()
+    const command = readString(record.command).trim()
+    if (!type || !command) continue
+
+    if (type === 'read') {
+      const name = readString(record.name).trim()
+      const path = readString(record.path).trim()
+      if (!name && !path) continue
+      normalized.push({ type: 'read', command, name: name || path, path: path || command })
+      continue
+    }
+
+    if (type === 'listFiles') {
+      const path = typeof record.path === 'string'
+        ? readString(record.path).trim()
+        : record.path === null
+          ? null
+          : ''
+      normalized.push({ type: 'listFiles', command, path: path || null })
+      continue
+    }
+
+    if (type === 'search') {
+      const query = typeof record.query === 'string' ? readString(record.query).trim() : null
+      const path = typeof record.path === 'string' ? readString(record.path).trim() : null
+      normalized.push({ type: 'search', command, query: query || null, path: path || null })
+      continue
+    }
+
+    if (type === 'unknown') {
+      normalized.push({ type: 'unknown', command })
+    }
+  }
+
+  return normalized
+}
+
 function parseUserMessageContent(
   itemId: string,
   content: UserInput[] | undefined,
@@ -469,13 +524,21 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
     const cwd = typeof raw.cwd === 'string' ? raw.cwd : null
     const aggregatedOutput = typeof raw.aggregatedOutput === 'string' ? raw.aggregatedOutput : ''
     const exitCode = typeof raw.exitCode === 'number' ? raw.exitCode : null
+    const commandActions = readCommandActions(raw.commandActions)
     return [
       {
         id: item.id,
         role: 'system' as const,
         text: cmd,
         messageType: 'commandExecution',
-        commandExecution: { command: cmd, cwd, status, aggregatedOutput, exitCode },
+        commandExecution: {
+          command: cmd,
+          cwd,
+          status,
+          aggregatedOutput,
+          exitCode,
+          commandActions,
+        },
       },
     ]
   }

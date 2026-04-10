@@ -64,7 +64,21 @@
                     @click="toggleCommandExpand(cmd)"
                   >
                     <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                    <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                    <span class="cmd-label-wrap">
+                      <code class="cmd-label">{{ commandExecutionSummaryLines(cmd)[0] || '(command)' }}</code>
+                      <span
+                        v-if="commandExecutionSummaryLines(cmd).length > 1"
+                        class="cmd-action-lines"
+                      >
+                        <span
+                          v-for="(line, index) in commandExecutionSummaryLines(cmd).slice(1)"
+                          :key="`action:${cmd.id}:${index}`"
+                          class="cmd-action-line"
+                        >
+                          └ {{ line }}
+                        </span>
+                      </span>
+                    </span>
                     <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
                   </button>
                   <div
@@ -96,7 +110,21 @@
                 @click="toggleCommandExpand(message)"
               >
                 <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(message) }">▶</span>
-                <code class="cmd-label">{{ message.commandExecution?.command || '(command)' }}</code>
+                <span class="cmd-label-wrap">
+                  <code class="cmd-label">{{ commandExecutionSummaryLines(message)[0] || '(command)' }}</code>
+                  <span
+                    v-if="commandExecutionSummaryLines(message).length > 1"
+                    class="cmd-action-lines"
+                  >
+                    <span
+                      v-for="(line, index) in commandExecutionSummaryLines(message).slice(1)"
+                      :key="`action:${message.id}:${index}`"
+                      class="cmd-action-line"
+                    >
+                      └ {{ line }}
+                    </span>
+                  </span>
+                </span>
                 <span class="cmd-status">{{ commandStatusLabel(message) }}</span>
               </button>
               <div
@@ -257,7 +285,21 @@
                         @click="toggleCommandExpand(cmd)"
                       >
                         <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                        <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                        <span class="cmd-label-wrap">
+                          <code class="cmd-label">{{ commandExecutionSummaryLines(cmd)[0] || '(command)' }}</code>
+                          <span
+                            v-if="commandExecutionSummaryLines(cmd).length > 1"
+                            class="cmd-action-lines"
+                          >
+                            <span
+                              v-for="(line, index) in commandExecutionSummaryLines(cmd).slice(1)"
+                              :key="`worked-action:${cmd.id}:${index}`"
+                              class="cmd-action-line"
+                            >
+                              └ {{ line }}
+                            </span>
+                          </span>
+                        </span>
                         <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
                       </button>
                       <div
@@ -852,7 +894,15 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { ThreadScrollState, UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
+import type {
+  CommandExecutionData,
+  ThreadScrollState,
+  UiFileChange,
+  UiLiveOverlay,
+  UiMessage,
+  UiPlanStep,
+  UiServerRequest,
+} from '../../types/codex'
 import { useMobile } from '../../composables/useMobile'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -926,7 +976,7 @@ function readPlanData(message: UiMessage): { explanation: string; steps: UiPlanS
   return parsePlanFromMessageText(message.text)
 }
 
-function isCommandMessage(message: UiMessage): boolean {
+function isCommandMessage(message: UiMessage): message is UiMessage & { commandExecution: CommandExecutionData } {
   return message.messageType === 'commandExecution' && !!message.commandExecution
 }
 
@@ -964,6 +1014,26 @@ function isFileChangeMessage(message: UiMessage): boolean {
     && message.fileChangeStatus === 'completed'
     && Array.isArray(message.fileChanges)
     && message.fileChanges.length > 0
+}
+
+function commandExecutionSummaryLines(message: UiMessage): string[] {
+  if (!isCommandMessage(message)) return ['(command)']
+  const commandExecution = message.commandExecution
+  const actionSummaries = (commandExecution.commandActions ?? []).map((action) => {
+    if (action.type === 'read') return `Read ${action.name || action.path || action.command}`
+    if (action.type === 'listFiles') return `List ${action.path || action.command}`
+    if (action.type === 'search') {
+      const query = action.query?.trim()
+      const path = action.path?.trim()
+      if (query && path) return `Search ${query} in ${path}`
+      if (query) return `Search ${query}`
+      return `Search ${action.command}`
+    }
+    return `Run ${action.command}`
+  })
+
+  if (actionSummaries.length > 0) return actionSummaries
+  return [commandExecution.command.trim() || '(command)']
 }
 
 function isCopyableAssistantMessage(message: UiMessage): boolean {
@@ -1111,9 +1181,10 @@ function isCommandGroupExpanded(message: UiMessage): boolean {
 function commandGroupSummaryLabel(message: UiMessage): string {
   const commands = getCommandBlockForLatest(message)
   const count = commands.length
-  const latestCommand = message.commandExecution?.command?.trim() || '(command)'
+  const latestSummary = commandExecutionSummaryLines(message)[0] || '(command)'
   const countLabel = count === 1 ? '1 command' : `${count} commands`
-  return `${countLabel} · latest: ${latestCommand}`
+  if (count === 1) return latestSummary
+  return `${countLabel} · ${latestSummary}`
 }
 
 function commandGroupSummaryStatus(message: UiMessage): string {
@@ -4945,6 +5016,10 @@ onBeforeUnmount(() => {
   @apply rounded-b-none;
 }
 
+.cmd-label-wrap {
+  @apply flex flex-1 min-w-0 flex-col gap-0.5;
+}
+
 .cmd-chevron {
   @apply text-[10px] text-zinc-400 transition-transform duration-150 flex-shrink-0;
 }
@@ -4954,7 +5029,15 @@ onBeforeUnmount(() => {
 }
 
 .cmd-label {
-  @apply flex-1 min-w-0 truncate text-xs font-mono text-zinc-700;
+  @apply block min-w-0 truncate text-xs font-mono text-zinc-700;
+}
+
+.cmd-action-lines {
+  @apply flex flex-col gap-0.5 text-[11px] leading-snug text-zinc-500;
+}
+
+.cmd-action-line {
+  @apply truncate text-zinc-500;
 }
 
 .cmd-group-label {

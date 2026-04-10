@@ -91,12 +91,19 @@ export type UiThreadAutomation = {
   nextRunAtMs: number | null
 }
 
+export type CommandAction =
+  | { type: 'read'; command: string; name: string; path: string }
+  | { type: 'listFiles'; command: string; path: string | null }
+  | { type: 'search'; command: string; query: string | null; path: string | null }
+  | { type: 'unknown'; command: string }
+
 export type CommandExecutionData = {
   command: string
   cwd: string | null
   status: 'inProgress' | 'completed' | 'failed' | 'declined' | 'interrupted'
   aggregatedOutput: string
   exitCode: number | null
+  commandActions?: CommandAction[]
 }
 
 export type UiFileAttachment = { label: string; path: string }
