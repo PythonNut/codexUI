@@ -70,6 +70,7 @@
             @browse-thread-files="onBrowseThreadFiles"
             @rename-thread="onRenameThread"
             @fork-thread="onForkThread"
+            @compact-thread="onCompactThread"
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @export-thread="onExportThread" />
         </div>
@@ -1090,6 +1091,7 @@ const {
   forkThreadById,
   renameThreadById,
   forkThreadFromTurn,
+  compactThreadById,
   sendMessageToSelectedThread,
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
@@ -2038,6 +2040,10 @@ async function onRemoveAccount(accountId: string): Promise<void> {
 
 function onArchiveThread(threadId: string): void {
   void archiveThreadById(threadId)
+}
+
+function onCompactThread(threadId: string): void {
+  void compactThreadById(threadId)
 }
 
 async function onForkThread(threadId: string): Promise<void> {

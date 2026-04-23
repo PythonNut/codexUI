@@ -383,6 +383,9 @@
         <button class="thread-menu-item" type="button" @click="onExportThread(openThreadMenuThread.id)">
           Export chat
         </button>
+        <button class="thread-menu-item" type="button" @click="onCompactThread(openThreadMenuThread.id)">
+          Compact context
+        </button>
         <button class="thread-menu-item" type="button" @click="onForkThread(openThreadMenuThread.id)">
           Create chat fork
         </button>
@@ -542,6 +545,7 @@ const emit = defineEmits<{
   'reorder-project': [payload: { projectName: string; toIndex: number }]
   'export-thread': [threadId: string]
   'fork-thread': [threadId: string]
+  'compact-thread': [threadId: string]
 }>()
 
 type PendingProjectDrag = {
@@ -929,6 +933,11 @@ function onExportThread(threadId: string): void {
 
 function onForkThread(threadId: string): void {
   emit('fork-thread', threadId)
+  closeThreadMenu()
+}
+
+function onCompactThread(threadId: string): void {
+  emit('compact-thread', threadId)
   closeThreadMenu()
 }
 

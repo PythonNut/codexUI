@@ -619,6 +619,26 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
     ]
   }
 
+  if (item.type === 'contextCompaction') {
+    const raw = asRecord(item)
+    const summary = Array.isArray(raw?.summary)
+      ? raw.summary.map((value) => (typeof value === 'string' ? value.trim() : '')).filter((value) => value.length > 0).join('\n')
+      : ''
+    const text = summary.length > 0
+      ? summary
+      : (typeof raw?.text === 'string' && raw.text.trim().length > 0
+        ? raw.text.trim()
+        : 'Thread context was compacted.')
+    return [
+      {
+        id: item.id,
+        role: 'system',
+        text,
+        messageType: 'contextCompaction',
+      },
+    ]
+  }
+
   return []
 }
 
@@ -728,8 +748,26 @@ export function normalizeThreadMessagesV2(payload: ThreadReadResponse): UiMessag
       }
     }
   }
-  return messages
+  return dedupeThreadCompactionMessages(messages)
 }
+
+function dedupeThreadCompactionMessages(messages: UiMessage[]): UiMessage[] {
+  if (messages.length <= 1) return messages
+
+  const seenCompactionRows = new Set<string>()
+  const deduped: UiMessage[] = []
+  for (const message of messages) {
+    if (message.messageType === 'contextCompaction') {
+      const normalizedText = message.text.trim().replace(/\s+/gu, ' ')
+      const dedupeKey = `${message.turnId || ''}:${message.turnIndex ?? -1}:${normalizedText}`
+      if (seenCompactionRows.has(dedupeKey)) continue
+      seenCompactionRows.add(dedupeKey)
+    }
+    deduped.push(message)
+  }
+  return deduped
+}
+
 
 export function readThreadInProgressFromResponse(payload: ThreadReadResponse): boolean {
   const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []

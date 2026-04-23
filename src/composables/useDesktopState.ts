@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import {
 
   archiveThread,
+  compactThread,
   forkThread,
   getAvailableCollaborationModes,
   getAccountRateLimitsResponse,
@@ -3548,6 +3549,12 @@ export function useDesktopState() {
       return
     }
 
+    if (notification.method === 'thread/compacted') {
+      const compactedThreadId = extractThreadIdFromNotification(notification)
+      if (!compactedThreadId || compactedThreadId === selectedThreadId.value) return
+      void loadMessages(compactedThreadId, { silent: true }).catch(() => {})
+    }
+
     const turnActivity = readTurnActivity(notification)
     if (turnActivity) {
       setTurnActivityForThread(turnActivity.threadId, turnActivity.activity)
@@ -4305,6 +4312,17 @@ export function useDesktopState() {
       if (selectedThreadId.value === threadId) {
         await loadMessages(selectedThreadId.value)
       }
+    } catch (unknownError) {
+      error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
+    }
+  }
+
+  async function compactThreadById(threadId: string) {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+
+    try {
+      await compactThread(normalizedThreadId)
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
     }
@@ -5350,6 +5368,7 @@ export function useDesktopState() {
     setThreadTerminalOpen,
     toggleSelectedThreadTerminal,
     archiveThreadById,
+    compactThreadById,
     renameThreadById,
     forkThreadById,
     forkThreadFromTurn,
