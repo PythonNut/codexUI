@@ -98,6 +98,7 @@
             @create-project-worktree="onCreateProjectWorktree"
             @rename-thread="onRenameThread"
             @fork-thread="onForkThread"
+            @compact-thread="onCompactThread"
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @copy-thread-chat="onCopyThreadChat"
             @automations-changed="onAutomationsChanged"
@@ -1453,6 +1454,7 @@ const {
   forkThreadById,
   renameThreadById,
   forkThreadFromTurn,
+  compactThreadById,
   sendMessageToSelectedThread,
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
@@ -2798,6 +2800,10 @@ async function onRemoveAccount(storageId: string): Promise<void> {
 
 function onArchiveThread(threadId: string): void {
   void archiveThreadById(threadId)
+}
+
+function onCompactThread(threadId: string): void {
+  void compactThreadById(threadId)
 }
 
 async function onForkThread(threadId: string): Promise<void> {

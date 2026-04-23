@@ -633,6 +633,9 @@
         >
           Copy chat
         </button>
+        <button class="thread-menu-item" type="button" @click="onCompactThread(openThreadMenuThread.id)">
+          Compact context
+        </button>
         <button class="thread-menu-item" type="button" @click="onForkThread(openThreadMenuThread.id)">
           Create chat fork
         </button>
@@ -938,6 +941,8 @@ const emit = defineEmits<{
   'fork-thread': [threadId: string]
   'start-new-chat': []
   'automations-changed': []
+  'toggle-filter': []
+  'compact-thread': [threadId: string]
 }>()
 
 type PendingProjectDrag = {
@@ -1719,6 +1724,11 @@ function onCopyThreadChat(threadId: string): void {
 
 function onForkThread(threadId: string): void {
   emit('fork-thread', threadId)
+  closeThreadMenu()
+}
+
+function onCompactThread(threadId: string): void {
+  emit('compact-thread', threadId)
   closeThreadMenu()
 }
 
